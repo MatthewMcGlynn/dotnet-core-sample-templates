@@ -15,6 +15,19 @@
         "description": "Admin password"
       }
     },
+    "sqlAuthenticationLogin": {
+      "type": "string",
+      "metadata": {
+        "description": "SQL Server Authentication Login Account Name"
+      },
+      "defaultValue": "mysa"
+    },
+    "sqlAuthenticationPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "SQL Server Authentication Login Account Password"
+      }
+    },
     "numberOfInstances": {
       "type": "int",
       "minValue": 1,
@@ -83,7 +96,6 @@
     "sqlNetworkSecurityGroup": "SQLNetworkSecurityGroup",
     "sqlStorageName": "[concat('sqlstorage', uniqueString(resourceGroup().id))]",
     "sqlServerName" : "MusicStoreSQL",
-    "sqlPublicIPAddressName" : "SQLPublicIPAddress",
     "gatewayName" : "burstgw",
     "gatewayPublicIPName" : "gatewayPubIP",
     "sqlPrivateIP": "10.0.1.101"
@@ -414,7 +426,7 @@
               ]
             },
             "protectedSettings": {
-              "commandToExecute": "[concat('powershell -ExecutionPolicy Unrestricted -File configure-music-app.ps1 -user ',parameters('adminUsername'),' -password ',parameters('adminPassword'),' -sqlserver ',variables('sqlPrivateIP'))]"
+              "commandToExecute": "[concat('powershell -ExecutionPolicy Unrestricted -File configure-music-app.ps1 -user ',parameters('sqlAuthenticationLogin'),' -password ',parameters('sqlAuthenticationPassword'),' -sqlserver ',variables('sqlPrivateIP'))]"
             }
           }
         }
@@ -547,10 +559,10 @@
             "value": "[parameters('adminPassword')]"
           },
           "sqlUsername": {
-            "value": "[parameters('adminUsername')]"
+            "value": "[parameters('sqlAuthenticationLogin')]"
           },
           "sqlPassword": {
-            "value": "[parameters('adminPassword')]"
+            "value": "[parameters('sqlAuthenticationPassword')]"
           },
           "disksCount": {
             "value": 1
@@ -559,7 +571,7 @@
             "value": 50
           },
           "sqlEnginePort": {
-            "value": 1579
+            "value": 1433
           },
           "workloadType": {
             "value": "GENERAL"
@@ -583,7 +595,6 @@
       "location": "[resourceGroup().location]",
       "dependsOn": [
         "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
-        "[concat('Microsoft.Network/publicIpAddresses/', variables('sqlPublicIPAddressName'))]",
         "[concat('Microsoft.Network/networkSecurityGroups/', variables('sqlNetworkSecurityGroup'))]"
       ],
       "properties": {
@@ -595,27 +606,12 @@
                 "id": "[variables('databaseSubnetRef')]"
               },
               "privateIPAllocationMethod": "Static",
-              "privateIPAddress": "[variables('sqlPrivateIP')]",
-              "publicIpAddress": {
-                "id": "[resourceId(resourceGroup().Name,'Microsoft.Network/publicIpAddresses', variables('sqlPublicIPAddressName'))]"
-              }
+              "privateIPAddress": "[variables('sqlPrivateIP')]"
             }
           }
         ],
         "networkSecurityGroup": {
           "id": "[resourceId(resourceGroup().Name, 'Microsoft.Network/networkSecurityGroups', variables('sqlNetworkSecurityGroup'))]"
-        }
-      }
-    },
-    {
-      "name": "[variables('sqlPublicIPAddressName')]",
-      "type": "Microsoft.Network/publicIPAddresses",
-      "apiVersion": "2015-06-15",
-      "location": "[resourceGroup().location]",
-      "properties": {
-        "publicIPAllocationMethod": "Static",
-        "dnsSettings": {
-          "domainNameLabel": "sqlmusicstoredb"
         }
       }
     },
