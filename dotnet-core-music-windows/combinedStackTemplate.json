@@ -67,6 +67,7 @@
     "databaseSubnetName": "dbSubnet",
     "gatewaySubnetName": "GatewaySubnet",
     "subnetRef": "[concat(variables('vnetId'), '/subnets/', variables('frontEndSubnetName'))]",
+    "gatewaySubnetRef": "[concat(variables('vnetId'), '/subnets/', variables('gatewaySubnetName'))]",
     "databaseSubnetRef": "[concat(variables('vnetId'), '/subnets/', variables('databaseSubnetName'))]",
     "networkInterfaceName": "NetworkInterface",
     "sqlInterfaceName": "SQLNetworkInterface",
@@ -83,7 +84,10 @@
     "sqlStorageName": "[concat('sqlstorage', uniqueString(resourceGroup().id))]",
     "sqlServerName" : "MusicStoreSQL",
     "sqlPublicIPAddressName" : "SQLPublicIPAddress",
-    "sqlPrivateIP": "10.0.1.2"
+    "gatewayName" : "burstgw",
+    "gatewayPublicIPName" : "gatewayPubIP",
+    "sqlPrivateIP": "10.0.1.101"
+
   },
   "resources": [
     {
@@ -549,13 +553,13 @@
             "value": "[parameters('adminPassword')]"
           },
           "disksCount": {
-            "value": "1"
+            "value": 1
           },
           "diskSizeInGB": {
             "value": 50
           },
           "sqlEnginePort": {
-            "value": "1579"
+            "value": 1579
           },
           "workloadType": {
             "value": "GENERAL"
@@ -649,6 +653,44 @@
             }
           }
         ]
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "[variables('gatewayPublicIPName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic"
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/virtualNetworkGateways",
+      "name": "[variables('gatewayName')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('gatewayPublicIPName'))]",
+        "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]"
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[variables('gatewaySubnetRef')]"
+              },
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses',variables('gatewayPublicIPName'))]"
+              }
+            },
+            "name": "vnetGatewayConfig"
+          }
+        ],
+        "gatewayType": "Vpn",
+        "vpnType": "RouteBased",
+        "enableBgp": false
       }
     }
   ],
