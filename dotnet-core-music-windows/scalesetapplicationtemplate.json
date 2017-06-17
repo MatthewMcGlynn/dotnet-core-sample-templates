@@ -1,0 +1,505 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "adminUsername": {
+      "type": "string",
+      "minLength": 1,
+      "metadata": {
+        "description": "Admin username"
+      }
+    },
+    "adminPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Admin password"
+      }
+    },
+    "sqlAuthenticationLogin": {
+      "type": "string",
+      "metadata": {
+        "description": "SQL Server Authentication Login Account Name"
+      },
+      "defaultValue": "mysa"
+    },
+    "sqlAuthenticationPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "SQL Server Authentication Login Account Password"
+      }
+    },
+    "numberOfInstances": {
+      "type": "int",
+      "minValue": 1,
+      "defaultValue": 1,
+      "metadata": {
+        "description": "Number of VM instances to be created behind internal load balancer control"
+      }
+    },
+    "publicipaddressDnsName": {
+      "type": "string",
+      "minLength": 1
+    },
+        "virtualMachineSize": {
+      "type": "string",
+      "metadata": {
+        "description": "SQL Server Virtual Machine Size"
+      },
+      "allowedValues": [
+        "Standard_D1",
+        "Standard_D2",
+        "Standard_D3",
+        "Standard_D4",
+        "Standard_D11",
+        "Standard_D12",
+        "Standard_D13",
+        "Standard_D14"
+      ],
+      "defaultValue": "Standard_D1"
+    },
+    "sqlConnectivityType": {
+      "type": "string",
+      "metadata": {
+        "description": "SQL Server Virtual Machine SQL Connectivity Type"
+      },
+      "defaultValue": "Public"
+    }
+  },
+  "variables": {
+    "vmSize": "Standard_D1",
+    "imagePublisher": "MicrosoftWindowsServer",
+    "imageOffer": "WindowsServer",
+    "windowsOSVersion": "2016-Datacenter",
+    "vhdStorageType": "Standard_LRS",
+    "vhdStorageName": "[concat('vhdstorage', uniqueString(resourceGroup().id))]",
+    "virtualNetworkName": "VirtualNetwork",
+    "vnetId": "[resourceId('Microsoft.Network/virtualNetworks', variables('virtualNetworkName'))]",
+    "frontEndSubnetName": "FrontEndSubnet",
+    "databaseSubnetName": "dbSubnet",
+    "subnetRef": "[concat(variables('vnetId'), '/subnets/', variables('frontEndSubnetName'))]",
+    "databaseSubnetRef": "[concat(variables('vnetId'), '/subnets/', variables('databaseSubnetName'))]",
+    "sqlInterfaceName": "SQLNetworkInterface",
+    "publicIpAddressName": "PublicIp",
+    "loadBalancerName": "LoadBalancer",
+    "loadBalencerRule": "HTTP",
+    "lbBackEndPool": "lbBackEndPool",
+    "lbId": "[resourceId('Microsoft.Network/loadBalancers', variables('loadBalancerName'))]",
+    "lbPoolID": "[concat(variables('lbID'),'/backendAddressPools/',variables('lbBackEndPool'))]",
+    "lbProbeID": "[concat(variables('lbID'),'/probes/lbprobe')]",
+    "OSDiskName": "osdisk",
+    "storageAccountContainerName": "[toLower(concat('SC', uniqueString(resourceGroup().id)))]",
+    "sqlNetworkSecurityGroup": "SQLNetworkSecurityGroup",
+    "sqlStorageName": "[concat('sqlstorage', uniqueString(resourceGroup().id))]",
+    "sqlServerName" : "MusicStoreSQL",
+    "sqlPrivateIP": "10.0.1.101",
+    "vmscaleSetName" : "frontEndScaleSet",
+    "loadBalancerNatPoolName" : "natpool1",
+    "monitoringStorageAccount" : "monstor",
+    "diagnosticsStorageAccountName": "[variables('monitoringStorageAccount')]",
+    "monaccountid": "[concat('/subscriptions/',subscription().subscriptionId,'/resourceGroups/', resourceGroup().name,'/providers/','Microsoft.Storage/storageAccounts/', variables('diagnosticsStorageAccountName'))]",
+    "wadlogs": "<WadCfg> <DiagnosticMonitorConfiguration overallQuotaInMB=\"4096\" xmlns=\"http://schemas.microsoft.com/ServiceHosting/2010/10/DiagnosticsConfiguration\"> <DiagnosticInfrastructureLogs scheduledTransferLogLevelFilter=\"Error\"/> <WindowsEventLog scheduledTransferPeriod=\"PT1M\" > <DataSource name=\"Application!*[System[(Level = 1 or Level = 2)]]\" /> <DataSource name=\"Security!*[System[(Level = 1 or Level = 2)]]\" /> <DataSource name=\"System!*[System[(Level = 1 or Level = 2)]]\" /></WindowsEventLog>",
+    "wadperfcounter": "<PerformanceCounters scheduledTransferPeriod=\"PT1M\"><PerformanceCounterConfiguration counterSpecifier=\"\\Processor(_Total)\\% Processor Time\" sampleRate=\"PT15S\" unit=\"Percent\"><annotation displayName=\"CPU utilization\" locale=\"en-us\"/></PerformanceCounterConfiguration></PerformanceCounters>",
+    "wadcfgxstart": "[concat(variables('wadlogs'),variables('wadperfcounter'),'<Metrics resourceId=\"')]",
+    "wadmetricsresourceid": "[concat('/subscriptions/',subscription().subscriptionId,'/resourceGroups/',resourceGroup().name ,'/providers/','Microsoft.Compute/virtualMachineScaleSets/',variables('vmscaleSetName'))]",
+    "wadcfgxend": "[concat('\"><MetricAggregation scheduledTransferPeriod=\"PT1H\"/><MetricAggregation scheduledTransferPeriod=\"PT1M\"/></Metrics></DiagnosticMonitorConfiguration></WadCfg>')]"
+ },
+  "resources": [
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "[variables('vhdStorageName')]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "storage-account"
+      },
+      "properties": {
+        "accountType": "[variables('vhdStorageType')]"
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "[variables('monitoringStorageAccount')]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "storage-account"
+      },
+      "properties": {
+        "accountType": "[variables('vhdStorageType')]"
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "[variables('publicIpAddressName')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [],
+      "tags": {
+        "displayName": "public-ip"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic",
+        "dnsSettings": {
+          "domainNameLabel": "[parameters('publicipaddressDnsName')]"
+        }
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/loadBalancers",
+      "name": "[variables('loadBalancerName')]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "load-balancer"
+      },
+      "dependsOn": [
+        "[variables('publicIpAddressName')]"
+      ],
+      "properties": {
+        "frontendIPConfigurations": [
+          {
+            "properties": {
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpAddressName'))]"
+              }
+            },
+            "name": "LoadBalancerFrontend"
+          }
+        ],
+        "backendAddressPools": [
+          {
+            "name": "[variables('lbBackEndPool')]"
+          }
+        ],
+        "loadBalancingRules": [
+          {
+            "name": "[variables('loadBalencerRule')]",
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', variables('loadBalancerName')), '/frontendIPConfigurations/LoadBalancerFrontend')]"
+              },
+              "backendAddressPool": {
+                "id": "[variables('lbPoolID')]"
+              },
+              "protocol": "Tcp",
+              "frontendPort": 80,
+              "backendPort": 80,
+              "enableFloatingIP": false,
+              "idleTimeoutInMinutes": 5,
+              "probe": {
+                "id": "[variables('lbProbeID')]"
+              }
+            }
+          }
+        ],
+        "probes": [
+          {
+            "properties": {
+              "protocol": "Tcp",
+              "port": 80,
+              "intervalInSeconds": 15,
+              "numberOfProbes": 2
+            },
+            "name": "lbprobe"
+          }
+        ],
+        "inboundNatPools": [
+          {
+            "name": "[variables('loadBalancerNatPoolName')]",
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', variables('loadBalancerName')), '/frontendIPConfigurations/LoadBalancerFrontend')]"
+              },
+              "protocol": "tcp",
+              "frontendPortRangeStart": 50000,
+              "frontendPortRangeEnd": 50019,
+              "backendPort": 3389
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachineScaleSets",
+      "dependsOn": [
+            "[concat('Microsoft.Storage/storageAccounts/', variables('vhdStorageName'))]",
+            "Microsoft.Resources/deployments/prepareSqlVmDeployment"
+      ],
+      "sku": {
+        "name": "[variables('vmSize')]",
+        "tier": "Standard",
+        "capacity": "[parameters('numberOfInstances')]"
+      },
+      "name": "[variables('vmScaleSetName')]",
+      "apiVersion": "2016-03-30",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "upgradePolicy": {
+          "mode": "Manual"
+        },
+        "virtualMachineProfile": {
+          "storageProfile": {
+            "osDisk": {
+              "vhdContainers": [
+                "[concat(reference(concat('Microsoft.Storage/storageAccounts/', variables('vhdStorageName')), providers('Microsoft.Storage', 'storageAccounts').apiVersions[0]).primaryEndpoints.blob, variables('storageAccountContainerName'))]"
+              ],
+              "name": "[variables('OSDiskName')]",
+              "caching": "ReadOnly",
+              "createOption": "FromImage"
+            },
+            "imageReference": {
+                "publisher": "[variables('imagePublisher')]",
+                "offer": "[variables('imageOffer')]",
+                "sku": "[variables('windowsOSVersion')]",
+                "version": "latest"
+            }
+          },
+          "osProfile": {
+            "computerNamePrefix": "instance",
+            "adminUsername": "[parameters('adminUsername')]",
+            "adminPassword": "[parameters('adminPassword')]"
+          },
+          "networkProfile": {
+            "networkInterfaceConfigurations": [
+              {
+                "name": "nic",
+                "properties": {
+                  "primary": true,
+                  "ipConfigurations": [
+                    {
+                      "name": "ipconfig",
+                      "properties": {
+                        "subnet": {
+                          "id": "[variables('subnetRef')]"
+                        },
+                        "loadBalancerBackendAddressPools": [
+                          {
+                            "id": "[variables('lbPoolID')]"
+                          }
+                        ],
+                        "loadBalancerInboundNatPools": [
+                          {
+                            "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Network/loadBalancers/', variables('loadBalancerName'), '/inboundNatPools/', variables('loadBalancerNatPoolName'))]"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "extensionProfile": {
+            "extensions": [
+              {
+                "name": "customScript",
+                "properties": {
+                "publisher": "Microsoft.Compute",
+                "type": "CustomScriptExtension",
+                "typeHandlerVersion": "1.4",
+                "autoUpgradeMinorVersion": true,
+                "settings": {
+                    "fileUris": [
+                    "https://raw.githubusercontent.com/MatthewMcGlynn/dotnet-core-sample-templates/master/dotnet-core-music-windows/scripts/configure-music-app.ps1"
+                ]
+                },
+                "protectedSettings": {
+                    "commandToExecute": "[concat('powershell -ExecutionPolicy Unrestricted -File configure-music-app.ps1 -user ',parameters('sqlAuthenticationLogin'),' -password ',parameters('sqlAuthenticationPassword'),' -sqlserver ',variables('sqlPrivateIP'))]"
+                }
+                }
+              },
+           {
+            "name": "Microsoft.Insights.VMDiagnosticsSettings",
+            "properties": {
+              "publisher": "Microsoft.Azure.Diagnostics",
+              "type": "IaaSDiagnostics",
+              "typeHandlerVersion": "1.5",
+              "autoUpgradeMinorVersion": true,
+              "settings": {
+                "xmlCfg": "[base64(concat(variables('wadcfgxstart'),variables('wadmetricsresourceid'),variables('wadcfgxend')))]",
+                "storageAccount": "[variables('monitoringStorageAccount')]"
+              },
+              "protectedSettings": {
+                "storageAccountName": "[variables('monitoringStorageAccount')]",
+                "storageAccountKey": "[listkeys(variables('monaccountid'), '2015-06-15').key1]",
+                "storageAccountEndPoint": "https://local.azurestack.external"
+              }
+            }
+          }
+            ]
+          }
+        }
+      }
+    },
+          {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "[variables('sqlStorageName')]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "storage-account"
+      },
+      "properties": {
+        "accountType": "Standard_LRS"
+      }
+    },
+    {
+      "name": "[variables('sqlServerName')]",
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2015-06-15",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Storage/storageAccounts/', variables('sqlStorageName'))]",
+        "[concat('Microsoft.Network/networkInterfaces/', variables('sqlInterfaceName'))]"
+      ],
+      "properties": {
+        "osProfile": {
+          "computerName": "[variables('sqlServerName')]",
+          "adminUsername": "[parameters('adminUsername')]",
+          "adminPassword": "[parameters('adminPassword')]",
+          "windowsConfiguration": {
+            "provisionVmAgent": "true"
+          }
+        },
+        "hardwareProfile": {
+          "vmSize": "[parameters('virtualMachineSize')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "MicrosoftSQLServer",
+            "offer": "SQL2016SP1-WS2016",
+            "sku": "Express",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "osdisk",
+            "vhd": {
+              "uri": "[concat(reference(concat('Microsoft.Storage/storageAccounts/',variables('sqlStorageName')), '2015-06-15').primaryEndpoints.blob,'vhds/osdisk', '.vhd')]"
+            },
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          },
+          "dataDisks": [
+            {
+              "vhd": {
+                "uri": "[concat(reference(concat('Microsoft.Storage/storageAccounts/',variables('sqlStorageName')), '2015-06-15').primaryEndpoints.blob,'vhds/sqldatadisk', '.vhd')]"
+              },
+              "name": "[concat(variables('sqlServerName'), '0','-data-disk1')]",
+              "createOption": "Empty",
+              "lun": 0,
+              "diskSizeGB": "50",
+              "caching": "ReadOnly"
+            }
+          ]
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('sqlInterfaceName'))]"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Compute/virtualMachines/extensions",
+      "name": "[concat(variables('sqlServerName'), '/SqlIaasExtension')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Compute/virtualMachines/', variables('sqlServerName'))]"
+      ],
+      "properties": {
+        "type": "SqlIaaSAgent",
+        "publisher": "Microsoft.SqlServer.Management",
+        "typeHandlerVersion": "1.2",
+        "autoUpgradeMinorVersion": true,
+        "settings": {
+          "AutoTelemetrySettings": {
+            "Region": "[resourceGroup().location]"
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "name": "prepareSqlVmDeployment",
+      "apiVersion": "2016-02-01",
+      "dependsOn": [
+        "[concat('Microsoft.Compute/virtualMachines/', variables('sqlServerName'), '/extensions/SqlIaasExtension')]"
+      ],
+      "properties": {
+        "mode": "Incremental",
+        "templateLink": {
+          "uri": "https://raw.githubusercontent.com/Azure/azure-quickstart-templates/master/201-vm-sql-full-autopatching/nested/preparingSqlServerSa.json"
+        },
+        "parameters": {
+          "sqlVMName": {
+            "value": "[variables('sqlServerName')]"
+          },
+          "location": {
+            "value": "[resourceGroup().location]"
+          },
+          "adminUsername": {
+            "value": "[parameters('adminUsername')]"
+          },
+          "adminPassword": {
+            "value": "[parameters('adminPassword')]"
+          },
+          "sqlUsername": {
+            "value": "[parameters('sqlAuthenticationLogin')]"
+          },
+          "sqlPassword": {
+            "value": "[parameters('sqlAuthenticationPassword')]"
+          },
+          "disksCount": {
+            "value": 1
+          },
+          "diskSizeInGB": {
+            "value": 50
+          },
+          "sqlEnginePort": {
+            "value": 1433
+          },
+          "workloadType": {
+            "value": "GENERAL"
+          },
+          "connectionType": {
+            "value": "[parameters('sqlConnectivityType')]"
+          },
+          "sqlVMPrepareModulesURL": {
+            "value": "https://raw.githubusercontent.com/Azure/azure-quickstart-templates/master/201-vm-sql-full-autopatching/scripts/PrepareSqlServer.ps1.zip"
+          },
+          "sqlVMPrepareConfigurationFunction": {
+            "value": "PrepareSqlServerSa.ps1\\PrepareSqlServerSa"
+          }
+        }
+      }
+    },
+    {
+      "name": "[variables('sqlInterfaceName')]",
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2015-06-15",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "subnet": {
+                "id": "[variables('databaseSubnetRef')]"
+              },
+              "privateIPAllocationMethod": "Static",
+              "privateIPAddress": "[variables('sqlPrivateIP')]"
+            }
+          }
+        ],
+        "networkSecurityGroup": {
+          "id": "[resourceId(resourceGroup().Name, 'Microsoft.Network/networkSecurityGroups', variables('sqlNetworkSecurityGroup'))]"
+        }
+      }
+    }
+  ]
+}
