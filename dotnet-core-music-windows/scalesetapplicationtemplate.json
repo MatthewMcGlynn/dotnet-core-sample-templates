@@ -300,7 +300,7 @@
                 "autoUpgradeMinorVersion": true,
                 "settings": {
                     "fileUris": [
-                    "https://raw.githubusercontent.com/MatthewMcGlynn/dotnet-core-sample-templates/master/dotnet-core-music-windows/scripts/configure-music-app.ps1"
+                    "https://raw.githubusercontent.com/MatthewMcGlynn/dotnet-core-sample-templates/master/dotnet-core-music-windows/scripts/configure-demo-app.ps1"
                 ]
                 },
                 "protectedSettings": {
