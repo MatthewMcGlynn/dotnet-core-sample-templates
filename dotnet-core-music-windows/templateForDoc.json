@@ -57,6 +57,12 @@
       ],
       "defaultValue": "Standard_D1"
     },
+    "localGatewayIpAddress" :{
+      "type": "string",
+      "metadata": {
+        "description": "Azure virtual network gatewway IP address"
+      }
+    },
     "sqlConnectivityType": {
       "type": "string",
       "metadata": {
@@ -76,7 +82,9 @@
     "vnetId": "[resourceId('Microsoft.Network/virtualNetworks', variables('virtualNetworkName'))]",
     "frontEndSubnetName": "FrontEndSubnet",
     "databaseSubnetName": "dbSubnet",
+    "gatewaySubnetName": "GatewaySubnet",
     "subnetRef": "[concat(variables('vnetId'), '/subnets/', variables('frontEndSubnetName'))]",
+    "gatewaySubnetRef": "[concat(variables('vnetId'), '/subnets/', variables('gatewaySubnetName'))]",
     "databaseSubnetRef": "[concat(variables('vnetId'), '/subnets/', variables('databaseSubnetName'))]",
     "sqlInterfaceName": "SQLNetworkInterface",
     "publicIpAddressName": "PublicIp",
@@ -86,40 +94,67 @@
     "lbId": "[resourceId('Microsoft.Network/loadBalancers', variables('loadBalancerName'))]",
     "lbPoolID": "[concat(variables('lbID'),'/backendAddressPools/',variables('lbBackEndPool'))]",
     "lbProbeID": "[concat(variables('lbID'),'/probes/lbprobe')]",
+    "networkSecurityGroup": "NetworkSecurityGroup",
     "OSDiskName": "osdisk",
     "storageAccountContainerName": "[toLower(concat('SC', uniqueString(resourceGroup().id)))]",
     "sqlNetworkSecurityGroup": "SQLNetworkSecurityGroup",
     "sqlStorageName": "[concat('sqlstorage', uniqueString(resourceGroup().id))]",
     "sqlServerName" : "MusicStoreSQL",
+    "gatewayName" : "burstgw",
+    "gatewayPublicIPName" : "gatewayPubIP",
     "sqlPrivateIP": "10.0.1.101",
     "vmscaleSetName" : "frontEndScaleSet",
     "loadBalancerNatPoolName" : "natpool1",
-    "monitoringStorageAccount" : "monstor",
-    "diagnosticsStorageAccountName": "[variables('monitoringStorageAccount')]",
-    "monaccountid": "[concat('/subscriptions/',subscription().subscriptionId,'/resourceGroups/', resourceGroup().name,'/providers/','Microsoft.Storage/storageAccounts/', variables('diagnosticsStorageAccountName'))]",
-    "wadlogs": "<WadCfg> <DiagnosticMonitorConfiguration overallQuotaInMB=\"4096\" xmlns=\"http://schemas.microsoft.com/ServiceHosting/2010/10/DiagnosticsConfiguration\"> <DiagnosticInfrastructureLogs scheduledTransferLogLevelFilter=\"Error\"/> <WindowsEventLog scheduledTransferPeriod=\"PT1M\" > <DataSource name=\"Application!*[System[(Level = 1 or Level = 2)]]\" /> <DataSource name=\"Security!*[System[(Level = 1 or Level = 2)]]\" /> <DataSource name=\"System!*[System[(Level = 1 or Level = 2)]]\" /></WindowsEventLog>",
-    "wadperfcounter": "<PerformanceCounters scheduledTransferPeriod=\"PT1M\"><PerformanceCounterConfiguration counterSpecifier=\"\\Processor(_Total)\\% Processor Time\" sampleRate=\"PT15S\" unit=\"Percent\"><annotation displayName=\"CPU utilization\" locale=\"en-us\"/></PerformanceCounterConfiguration></PerformanceCounters>",
-    "wadcfgxstart": "[concat(variables('wadlogs'),variables('wadperfcounter'),'<Metrics resourceId=\"')]",
-    "wadmetricsresourceid": "[concat('/subscriptions/',subscription().subscriptionId,'/resourceGroups/',resourceGroup().name ,'/providers/','Microsoft.Compute/virtualMachineScaleSets/',variables('vmscaleSetName'))]",
-    "wadcfgxend": "[concat('\"><MetricAggregation scheduledTransferPeriod=\"PT1H\"/><MetricAggregation scheduledTransferPeriod=\"PT1M\"/></Metrics></DiagnosticMonitorConfiguration></WadCfg>')]"
- },
+    "localGatewayAddressPrefix" : "10.0.4.0/22",
+    "localNetworkGatewayName" : "Az-msvng01"
+
+  },
   "resources": [
     {
       "apiVersion": "2015-06-15",
-      "type": "Microsoft.Storage/storageAccounts",
-      "name": "[variables('vhdStorageName')]",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "name": "[variables('networkSecurityGroup')]",
       "location": "[resourceGroup().location]",
       "tags": {
-        "displayName": "storage-account"
+        "displayName": "network-security-group"
       },
       "properties": {
-        "accountType": "[variables('vhdStorageType')]"
+        "securityRules": [
+          {
+            "name": "http",
+            "properties": {
+              "description": "http endpoint",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "80",
+              "sourceAddressPrefix": "*",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 100,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "rdp",
+            "properties": {
+              "description": "rdp endpoint",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "3389",
+              "sourceAddressPrefix": "*",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 200,
+              "direction": "Inbound"
+            }
+          }
+        ]
       }
     },
     {
       "apiVersion": "2015-06-15",
       "type": "Microsoft.Storage/storageAccounts",
-      "name": "[variables('monitoringStorageAccount')]",
+      "name": "[variables('vhdStorageName')]",
       "location": "[resourceGroup().location]",
       "tags": {
         "displayName": "storage-account"
@@ -146,6 +181,52 @@
     },
     {
       "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/virtualNetworks",
+      "name": "[variables('virtualNetworkName')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+          "[concat('Microsoft.Network/networkSecurityGroups/', variables('networkSecurityGroup'))]",
+          "[concat('Microsoft.Network/networkSecurityGroups/', variables('sqlNetworkSecurityGroup'))]"
+      ],
+      "tags": {
+        "displayName": "virtual-network"
+      },
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "10.0.0.0/22"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('frontEndSubnetName')]",
+            "properties": {
+              "addressPrefix": "10.0.0.0/24",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('networkSecurityGroup'))]"
+              }
+            }
+          },
+          {
+            "name": "[variables('databaseSubnetName')]",
+            "properties": {
+              "addressPrefix": "10.0.1.0/24",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('sqlNetworkSecurityGroup'))]"
+              }
+            }
+          },
+          {
+            "name": "[variables('gatewaySubnetName')]",
+            "properties": {
+              "addressPrefix": "10.0.2.0/24"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
       "type": "Microsoft.Network/loadBalancers",
       "name": "[variables('loadBalancerName')]",
       "location": "[resourceGroup().location]",
@@ -153,6 +234,7 @@
         "displayName": "load-balancer"
       },
       "dependsOn": [
+        "[variables('vnetId')]",
         "[variables('publicIpAddressName')]"
       ],
       "properties": {
@@ -223,6 +305,7 @@
       "type": "Microsoft.Compute/virtualMachineScaleSets",
       "dependsOn": [
             "[concat('Microsoft.Storage/storageAccounts/', variables('vhdStorageName'))]",
+            "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
             "Microsoft.Resources/deployments/prepareSqlVmDeployment"
       ],
       "sku": {
@@ -300,32 +383,14 @@
                 "autoUpgradeMinorVersion": true,
                 "settings": {
                     "fileUris": [
-                    "https://raw.githubusercontent.com/MatthewMcGlynn/dotnet-core-sample-templates/master/dotnet-core-music-windows/scripts/configure-demo-app.ps1"
+                    "https://raw.githubusercontent.com/MatthewMcGlynn/dotnet-core-sample-templates/master/dotnet-core-music-windows/scripts/configure-music-app.ps1"
                 ]
                 },
                 "protectedSettings": {
-                    "commandToExecute": "[concat('powershell -ExecutionPolicy Unrestricted -File configure-demo-app.ps1 -user ',parameters('sqlAuthenticationLogin'),' -password ',parameters('sqlAuthenticationPassword'),' -sqlserver ',variables('sqlPrivateIP'))]"
+                    "commandToExecute": "[concat('powershell -ExecutionPolicy Unrestricted -File configure-music-app.ps1 -user ',parameters('sqlAuthenticationLogin'),' -password ',parameters('sqlAuthenticationPassword'),' -sqlserver ',variables('sqlPrivateIP'))]"
                 }
                 }
-              },
-           {
-            "name": "Microsoft.Insights.VMDiagnosticsSettings",
-            "properties": {
-              "publisher": "Microsoft.Azure.Diagnostics",
-              "type": "IaaSDiagnostics",
-              "typeHandlerVersion": "1.5",
-              "autoUpgradeMinorVersion": true,
-              "settings": {
-                "xmlCfg": "[base64(concat(variables('wadcfgxstart'),variables('wadmetricsresourceid'),variables('wadcfgxend')))]",
-                "storageAccount": "[variables('monitoringStorageAccount')]"
-              },
-              "protectedSettings": {
-                "storageAccountName": "[variables('monitoringStorageAccount')]",
-                "storageAccountKey": "[listkeys(variables('monaccountid'), '2015-06-15').key1]",
-                "storageAccountEndPoint": "https://local.azurestack.external"
               }
-            }
-          }
             ]
           }
         }
@@ -482,6 +547,8 @@
       "apiVersion": "2015-06-15",
       "location": "[resourceGroup().location]",
       "dependsOn": [
+        "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+        "[concat('Microsoft.Network/networkSecurityGroups/', variables('sqlNetworkSecurityGroup'))]"
       ],
       "properties": {
         "ipConfigurations": [
@@ -500,6 +567,101 @@
           "id": "[resourceId(resourceGroup().Name, 'Microsoft.Network/networkSecurityGroups', variables('sqlNetworkSecurityGroup'))]"
         }
       }
+    },
+    {
+      "name": "[variables('sqlNetworkSecurityGroup')]",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2015-06-15",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "default-allow-rdp",
+            "properties": {
+              "priority": 1000,
+              "sourceAddressPrefix": "*",
+              "protocol": "Tcp",
+              "destinationPortRange": "3389",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*"
+            }
+          },
+          {
+            "name": "default-allow-sql",
+            "properties": {
+              "priority": 1500,
+              "sourceAddressPrefix": "*",
+              "protocol": "Tcp",
+              "destinationPortRange": "1433",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "[variables('gatewayPublicIPName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic"
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/virtualNetworkGateways",
+      "name": "[variables('gatewayName')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('gatewayPublicIPName'))]",
+        "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]"
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[variables('gatewaySubnetRef')]"
+              },
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses',variables('gatewayPublicIPName'))]"
+              }
+            },
+            "name": "vnetGatewayConfig"
+          }
+        ],
+        "gatewayType": "Vpn",
+        "vpnType": "RouteBased",
+        "enableBgp": false
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/localNetworkGateways",
+      "name": "[variables('localNetworkGatewayName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "localNetworkAddressSpace": {
+          "addressPrefixes": [
+            "[variables('localGatewayAddressPrefix')]"
+          ]
+        },
+        "gatewayIpAddress": "[parameters('localGatewayIpAddress')]"
+      }
     }
-  ]
+    
+  ],
+  "outputs": {
+    "fqdn": {
+      "value": "[reference(resourceId('Microsoft.Network/publicIPAddresses',variables('publicIpAddressName')),providers('Microsoft.Network', 'publicIPAddresses').apiVersions[0]).dnsSettings.fqdn]",
+      "type": "string"
+    }
+  }
 }
